@@ -1,5 +1,6 @@
 package ssatr.device;
 
+import java.util.Locale;
 import java.util.concurrent.BlockingQueue;
 
 /**
@@ -19,6 +20,9 @@ public class SporadicAlarmTask implements Runnable {
     private final MqttConnection mqtt;
     private final BlockingQueue<Double> alarmEvents;
 
+    // Pragul implicit raportat în mesajul de alarmă
+    private double threshold = 28.0;
+
     public SporadicAlarmTask(String deviceId, MqttConnection mqtt, BlockingQueue<Double> alarmEvents) {
         this.deviceId = deviceId;
         this.mqtt = mqtt;
@@ -27,15 +31,41 @@ public class SporadicAlarmTask implements Runnable {
 
     @Override
     public void run() {
-        // TODO 2: implementați taskul sporadic:
-        //   - așteptați un eveniment: alarmEvents.take()
-        //   - dacă de la ultima eliberare au trecut mai puțin de
-        //     MIN_INTERARRIVAL_MS, respingeți evenimentul (afișați un mesaj)
-        //   - altfel publicați pe Config.alarmTopic(deviceId) mesajul
-        //     "deviceId;timestamp;temperatura;prag"
-        //     (pragul curent poate fi transmis împreună cu temperatura sau
-        //      citit din PeriodicTelemetryTask; alegeți și justificați în raport)
-        //
-        // Vezi exemplul exemple/01-taskuri/.../SporadicTaskExample.java
+        long lastReleaseTime = 0;
+
+        while (!Thread.currentThread().isInterrupted()) {
+            try {
+                // 1. Preluăm valoarea temperaturii din coadă (așteaptă blocant până când apare o depășire)
+                Double temp = alarmEvents.take();
+                long now = System.currentTimeMillis();
+
+                // 2. Impunem intervalul minim între sosiri (MIN_INTERARRIVAL_MS)
+                if (now - lastReleaseTime >= MIN_INTERARRIVAL_MS) {
+                    lastReleaseTime = now;
+
+                    // Format cerut: deviceId;timestamp;temperatura;prag
+                    String payload = String.format(Locale.US, "%s;%d;%.2f;%.2f",
+                            deviceId, now, temp, threshold);
+
+                    mqtt.publish(Config.alarmTopic(deviceId), payload);
+                    System.out.println("[ALARM SENT] " + payload);
+                } else {
+                    // Evenimentul a sosit prea repede -> respins conform modelului sporadic
+                    long diff = now - lastReleaseTime;
+                    System.out.println("[SPORADIC REJECTED] Alarma ignorata pentru " + deviceId
+                            + " (au trecut doar " + diff + " ms din minimul de " + MIN_INTERARRIVAL_MS + " ms)");
+                }
+
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (Exception e) {
+                System.err.println("[SporadicAlarmTask] Eroare: " + e.getMessage());
+            }
+        }
+    }
+
+    public void setThreshold(double threshold) {
+        this.threshold = threshold;
     }
 }

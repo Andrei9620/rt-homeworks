@@ -27,12 +27,72 @@ public class MessageProcessor implements Runnable {
 
     @Override
     public void run() {
-        // TODO 4: într-o buclă:
-        //   - preluați un mesaj: inbox.take()
-        //   - salvați mesajul în fișierul CSV: storage.append(kind, mesaj)
-        //     (CsvStorage este gata implementată)
-        //   - actualizați dashboard-ul, în funcție de kind
-        //   - alarmele și confirmările se afișează imediat în consolă
-        //   - un mesaj greșit (format invalid) nu trebuie să oprească thread-ul
+        while (!Thread.currentThread().isInterrupted()) {
+            try {
+                // 1. Preluăm mesajul din coadă (blocant)
+                String rawMessage = inbox.take();
+                if (rawMessage == null || rawMessage.trim().isEmpty()) {
+                    continue;
+                }
+
+                // 2. Salvăm mesajul brut în CSV (data/telemetry.csv, data/alarm.csv etc.)
+                storage.append(kind, rawMessage);
+
+                // 3. Parsăm mesajul protejat împotriva formatelor invalide
+                try {
+                    String[] parts = rawMessage.split(";");
+                    if (parts.length < 3) {
+                        System.err.println("[MessageProcessor-" + kind + "] Mesaj ignorat (campuri insuficiente): " + rawMessage);
+                        continue;
+                    }
+
+                    String deviceId = parts[0].trim();
+                    long timestamp = Long.parseLong(parts[1].trim());
+
+                    switch (kind) {
+                        case "telemetry":
+                            double temp = Double.parseDouble(parts[2].trim());
+                            dashboard.recordTelemetry(deviceId, timestamp, temp);
+                            break;
+
+                        case "alarm":
+                            double alarmTemp = Double.parseDouble(parts[2].trim());
+                            double threshold = parts.length > 3 ? Double.parseDouble(parts[3].trim()) : 0.0;
+                            dashboard.recordAlarm(deviceId, timestamp, alarmTemp, threshold);
+
+                            // Alarmele se afișează imediat în consolă
+                            System.out.printf(java.util.Locale.US,
+                                    "%n>>> [ALARMA RECEPTIONATA] Dispozitiv: %s | Temp: %.2f °C | Prag: %.2f °C <<<%n%n",
+                                    deviceId, alarmTemp, threshold);
+                            break;
+
+                        case "status":
+                            String statusText = parts[2].trim();
+                            dashboard.recordStatus(deviceId, timestamp, statusText);
+
+                            // Confirmările/statusurile se afișează imediat în consolă
+                            System.out.printf(java.util.Locale.US,
+                                    "%n>>> [STATUS/CONFIRMARE] Dispozitiv: %s -> %s <<<%n%n",
+                                    deviceId, statusText);
+                            break;
+
+                        default:
+                            System.err.println("[MessageProcessor] Tip necunoscut de mesaj: " + kind);
+                            break;
+                    }
+
+                } catch (NumberFormatException e) {
+                    System.err.println("[MessageProcessor-" + kind + "] Eroare parsare numar in mesajul '" + rawMessage + "': " + e.getMessage());
+                } catch (Exception e) {
+                    System.err.println("[MessageProcessor-" + kind + "] Eroare procesare continut mesaj: " + e.getMessage());
+                }
+
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (Exception e) {
+                System.err.println("[MessageProcessor-" + kind + "] Eroare neasteptata: " + e.getMessage());
+            }
+        }
     }
 }

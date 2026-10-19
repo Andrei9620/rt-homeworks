@@ -37,14 +37,77 @@ public class AperiodicCommandTask implements Runnable {
 
     @Override
     public void run() {
-        // TODO 3: implementați taskul aperiodic:
-        //   - preluați comenzile din coadă: commands.take()
-        //   - separați numele comenzii de parametru: command.split(" ")
-        //   - executați comanda (periodic.setPeriodMs(...), sensor.reset() etc.)
-        //   - publicați confirmarea pe Config.statusTopic(deviceId)
-        //   - o comandă necunoscută sau un parametru invalid nu trebuie să
-        //     oprească taskul: publicați "ERROR <motiv>"
-        //
-        // Vezi exemplul exemple/01-taskuri/.../AperiodicTaskExample.java
+        while (!Thread.currentThread().isInterrupted()) {
+            try {
+                // 1. Preluăm comanda din coadă (blochează firul până la sosirea unei comenzi)
+                String rawCommand = commands.take();
+                if (rawCommand == null || rawCommand.trim().isEmpty()) {
+                    continue;
+                }
+
+                String trimmed = rawCommand.trim();
+                String[] parts = trimmed.split("\\s+");
+                String action = parts[0].toUpperCase();
+                String statusResult;
+
+                // 2. Parsăm și executăm comanda
+                try {
+                    switch (action) {
+                        case "SET_INTERVAL":
+                            if (parts.length < 2) {
+                                throw new IllegalArgumentException("Lipseste parametrul <ms>");
+                            }
+                            long interval = Long.parseLong(parts[1]);
+                            if (interval <= 0) {
+                                throw new IllegalArgumentException("Intervalul trebuie sa fie strict pozitiv");
+                            }
+                            periodic.setPeriodMs(interval);
+                            statusResult = "OK " + trimmed;
+                            break;
+
+                        case "SET_THRESHOLD":
+                            if (parts.length < 2) {
+                                throw new IllegalArgumentException("Lipseste parametrul <valoare>");
+                            }
+                            double threshold = Double.parseDouble(parts[1]);
+                            periodic.setThreshold(threshold);
+                            statusResult = "OK " + trimmed;
+                            break;
+
+                        case "RESET":
+                            sensor.reset();
+                            statusResult = "OK RESET";
+                            break;
+
+                        case "STATUS":
+                            statusResult = String.format(java.util.Locale.US,
+                                    "OK STATUS period=%d threshold=%.2f",
+                                    periodic.getPeriodMs(), periodic.getThreshold());
+                            break;
+
+                        default:
+                            throw new IllegalArgumentException("Comanda necunoscuta: " + parts[0]);
+                    }
+                } catch (NumberFormatException e) {
+                    statusResult = "ERROR Parametru numeric invalid: " + e.getMessage();
+                } catch (IllegalArgumentException e) {
+                    statusResult = "ERROR " + e.getMessage();
+                } catch (Exception e) {
+                    statusResult = "ERROR Executie esuata: " + e.getMessage();
+                }
+
+                // 3. Format: deviceId;timestamp;<statusResult>
+                long timestamp = System.currentTimeMillis();
+                String payload = deviceId + ";" + timestamp + ";" + statusResult;
+
+                // 4. Publicăm confirmarea pe topicul de status
+                mqtt.publish(Config.statusTopic(deviceId), payload);
+
+            } catch (InterruptedException e) {
+                // Semnal de oprire a firului de execuție
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
     }
 }
