@@ -31,11 +31,12 @@ public class CommandConsole implements Runnable {
 
             if (line.isEmpty()) {
                 continue;
-            } else if (line.equals("exit")) {
+            } else if (line.equalsIgnoreCase("exit")) {
+                System.out.println("Oprire consola...");
                 break;
-            } else if (line.equals("help")) {
+            } else if (line.equalsIgnoreCase("help")) {
                 printHelp();
-            } else if (line.equals("show")) {
+            } else if (line.equalsIgnoreCase("show")) {
                 dashboard.print();
             } else {
                 sendCommand(line);
@@ -44,15 +45,39 @@ public class CommandConsole implements Runnable {
     }
 
     private void sendCommand(String line) {
-        // TODO 6: separați deviceId de restul liniei
-        //   ("device-1 SET_INTERVAL 1000" -> "device-1" și "SET_INTERVAL 1000")
-        //   și publicați comanda pe Config.commandTopic(deviceId).
-        //   Afișați un mesaj de eroare dacă linia nu are formatul corect.
-        System.out.println("(trimiterea comenzilor neimplementată): " + line);
+        // Separam la primul spatiu alb in maxim 2 bucati:
+        // parts[0] -> deviceId ("device-1")
+        // parts[1] -> comanda cu parametrii ("SET_INTERVAL 1000" sau "RESET")
+        String[] parts = line.split("\\s+", 2);
+
+        if (parts.length < 2) {
+            System.err.println("[EROARE CONSOLA] Format comanda invalid!");
+            System.err.println("Format asteptat: <deviceId> <COMANDA> [parametru]");
+            System.err.println("Exemple: device-1 SET_INTERVAL 1000 | device-1 STATUS | device-1 RESET");
+            return;
+        }
+
+        String deviceId = parts[0].trim();
+        String commandPayload = parts[1].trim();
+
+        try {
+            String topic = Config.commandTopic(deviceId);
+            mqtt.publish(topic, commandPayload);
+            System.out.printf("[COMANDĂ TRIMISĂ] Către: %s | Pe topic: %s | Conținut: %s%n",
+                    deviceId, topic, commandPayload);
+        } catch (Exception e) {
+            System.err.println("[EROARE MQTT] Nu s-a putut trimite comanda: " + e.getMessage());
+        }
     }
 
     private void printHelp() {
-        System.out.println("Comenzi: show | <deviceId> SET_INTERVAL <ms> | <deviceId> SET_THRESHOLD <valoare>");
-        System.out.println("         <deviceId> RESET | <deviceId> STATUS | help | exit");
+        System.out.println("\nComenzi disponibile:");
+        System.out.println("  show                              -> Afiseaza starea curenta a device-urilor");
+        System.out.println("  <deviceId> SET_INTERVAL <ms>      -> Schimba perioada taskului periodic");
+        System.out.println("  <deviceId> SET_THRESHOLD <val>    -> Schimba pragul de temperatura pentru alarma");
+        System.out.println("  <deviceId> RESET                  -> Reseteaza senzorul la valoarea initiala");
+        System.out.println("  <deviceId> STATUS                 -> Cere perioada si pragul curent");
+        System.out.println("  help                              -> Afiseaza acest mesaj");
+        System.out.println("  exit                              -> Opreste aplicatia\n");
     }
 }
